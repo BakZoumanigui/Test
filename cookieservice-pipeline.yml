@@ -1,0 +1,136 @@
+# Build OnlineOrdering
+# Build and test ASP.NET projects.
+# Add steps that publish symbols, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/apps/aspnet/build-aspnet-4
+
+trigger:
+    branches:
+        include:
+            - release/*
+            - hotfix/*
+
+pr:
+    branches:
+        include:
+            - release/*
+            - hotfix/*
+    paths:
+        exclude:
+            - README.md
+
+pool:
+    vmImage: 'windows-latest'
+    name: Azure Pipelines
+    demands:
+        - npm
+        - msbuild
+        - visualstudio
+
+variables:
+    solution: '**/*.sln'
+    buildPlatform: 'Any CPU'
+    buildConfiguration: 'Release'
+
+steps:
+    - task: NuGetToolInstaller@1
+      displayName: 'Use NuGet 4.x'
+      inputs:
+          versionSpec: '4.x'
+          checkLatest: true
+
+    - task: NuGetCommand@2
+      displayName: 'NuGet restore'
+      inputs:
+          command: 'restore'
+          restoreSolution: '**/CookieDelivery_OnlineOrdering.sln'
+          feedsToUse: 'select'
+          vstsFeed: 'packages'
+          restoreDirectory: '.\packages'
+
+    - task: file-creator@5
+      displayName: 'File Creator - Connections.config - CookieService'
+      inputs:
+          filepath: '$(System.DefaultWorkingDirectory)\CookieService\connections.config'
+          filecontent: |
+              <connectionStrings>
+                <add name="connString" providerName="System.Data.SqlClient" connectionString="" />
+                <add name="connStringKinteco" providerName="System.Data.SqlClient" connectionString="" />
+              </connectionStrings>
+
+    - task: file-creator@5
+      displayName: 'File Creator - Connections.config - Commerce engine'
+      inputs:
+          filepath: '$(System.DefaultWorkingDirectory)\CookieDelivery_CommerceEngine\BLL.Test\CommerceEngine.BLL.Test\connections.config'
+          filecontent: |
+              <connectionStrings>
+                <add name="connString" providerName="System.Data.SqlClient" connectionString="" />
+                <add name="connStringKinteco" providerName="System.Data.SqlClient" connectionString="" />
+              </connectionStrings>
+
+    - task: ReplaceInFilesTextByText@1
+      displayName: 'Update Cookie Service Web.config -  Cookie Service Show detailed error messages'
+      inputs:
+          parameterSearchText: '<system.web>'
+          parameterReplaceText: '<system.web>     <customErrors mode="Off"/>'
+          parameterTypeOfSearch: filesList
+          parameterFilesList: '\CookieService\Web.config'
+
+    - task: ReplaceInFilesTextByText@1
+      displayName: 'Update Web.config -  CookieService- Turn off Development flag'
+      inputs:
+          parameterSearchText: '"Development" value="true"'
+          parameterReplaceText: '"Development" value="false"'
+          parameterTypeOfSearch: filesList
+          parameterFilesList: '\CookieService\Web.config'
+          
+    - task: ReplaceInFilesTextByText@1
+      displayName: 'Update Web.config -  CookieService- Turn off redirect'
+      inputs:
+          parameterSearchText: '"Rewrite rule1 for TiffsRedirectToProduction" enabled="true"'
+          parameterReplaceText: '"Rewrite rule1 for TiffsRedirectToProduction" enabled="false"'
+          parameterTypeOfSearch: filesList
+          parameterFilesList: '\CookieService\Web.config'
+
+    - task: FileTransform@1
+      displayName: 'CookieService - Update appsettings, connectionStrings, and configSections'
+      inputs:
+          folderPath: '$(System.DefaultWorkingDirectory)/CookieService'
+          fileType: xml
+          targetFiles: |
+              Web.config
+              Web.Release.config
+    
+    - task: MSBuild@1
+      inputs:
+        solution: '$(System.DefaultWorkingDirectory)/CookieService/CookieService.csproj'
+        platform: '$(BuildPlatform)'
+        configuration: '$(BuildConfiguration)'
+        msbuildArguments: '/p:OutputPath=bin /p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true /p:PackageLocation="$(build.artifactstagingdirectory)\\"'
+        maximumCpuCount: true
+        logProjectEvents: true
+
+    - task: PublishSymbols@2
+      displayName: 'Publish symbols path'
+      inputs:
+          SearchPattern: '**\bin\**\*.pdb'
+          PublishSymbols: false
+      continueOnError: true
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact'
+      inputs:
+          PathtoPublish: '$(build.artifactstagingdirectory)'
+          ArtifactName: '$(Parameters.ArtifactName)'
+      condition: succeededOrFailed()
+    
+    - task: PowerShell@2
+      inputs:
+        targetType: 'inline'
+        script: |
+          # _versionNumber was set in the previous step. Since build ID is part of version, there's no naming conflict when running builds repeatedly.
+          $date=$(Get-Date -format yyyy-MM-dd)
+
+          [string] $buildName = "$(Build.SourceBranchName)" + "_$(Build.BuildNumber)"
+          
+          Write-Host "Setting the name of the build to '$buildName'."
+          Write-Host "##vso[build.updatebuildnumber]$buildName"
