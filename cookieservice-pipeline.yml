@@ -5,4 +5,7 @@
 
 - task: CmdLine@2
   inputs:
-    script: 'echo Hello world!'
+    script: |
+      echo Write your commands here
+      
+      echo Hello world
